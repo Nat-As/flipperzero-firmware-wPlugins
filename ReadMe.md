@@ -85,6 +85,8 @@ $ ./fbt updater_package
 # Install this folder on your flipper dist/f7-C/f7-update-RM420FAP
 # If building animation assets:
 $ ./fbt dolphin_ext
+# To build external apps:
+$ ./fbt faps
 ```
 
 <a name="howto"></a>
