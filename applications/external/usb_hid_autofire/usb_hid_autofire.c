@@ -20,7 +20,7 @@ typedef struct {
 } UsbMouseEvent;
 
 bool btn_left_autofire = false;
-uint32_t autofire_delay = 100;
+uint32_t autofire_delay = 60;
 uint32_t secondClick = 0;
 
 static void usb_hid_autofire_render_callback(Canvas* canvas, void* ctx) {
@@ -40,7 +40,7 @@ static void usb_hid_autofire_render_callback(Canvas* canvas, void* ctx) {
     canvas_draw_str(canvas, 90, 10, "v");
     canvas_draw_str(canvas, 96, 10, VERSION);
     canvas_draw_str(canvas, 0, 22, "Press [ok] for auto left clicking");
-    canvas_draw_str(canvas, 0, 46, "delay [ms]:");
+    canvas_draw_str(canvas, 0, 46, "delay [s]:");
     canvas_draw_str(canvas, 50, 46, autofire_delay_str);
     canvas_draw_str(canvas, 0, 63, "Press [back] to exit");
 }
@@ -93,11 +93,11 @@ int32_t usb_hid_autofire_app(void* p) {
                     break;
                 case InputKeyLeft:
                     if(autofire_delay > 0) {
-                        autofire_delay -= 10;
+                        autofire_delay -= 60;
                     }
                     break;
                 case InputKeyRight:
-                    autofire_delay += 10;
+                    autofire_delay += 60;
                     break;
                 default:
                     break;
@@ -108,9 +108,9 @@ int32_t usb_hid_autofire_app(void* p) {
         if(btn_left_autofire) {
             furi_hal_hid_mouse_press(HID_MOUSE_BTN_LEFT);
             // TODO: Don't wait, but use the timer directly to just don't send the release event (see furi_hal_cortex_delay_us)
-            furi_delay_us(autofire_delay * 500);
+            furi_delay_us(autofire_delay * 500000);
             furi_hal_hid_mouse_release(HID_MOUSE_BTN_LEFT);
-            furi_delay_us(autofire_delay * 500);
+            furi_delay_us(autofire_delay * 500000);
             secondClick++;
             if(secondClick > 2) {
                 furi_delay_ms(autofire_delay * 4);
