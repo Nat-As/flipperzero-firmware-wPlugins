@@ -23,12 +23,16 @@ bool btn_left_autofire = false;
 uint32_t autofire_delay = 60;
 uint32_t secondClick = 0;
 
+// Timer variables for non-blocking delays
+uint32_t last_click_time = 0;
+bool mouse_pressed = false;
+uint32_t mouse_press_time = 0;
+uint32_t pause_until = 0;
+
 static void usb_hid_autofire_render_callback(Canvas* canvas, void* ctx) {
     UNUSED(ctx);
     char autofire_delay_str[12];
-    //std::string pi = "pi is " + std::to_string(3.1415926);
     itoa(autofire_delay, autofire_delay_str, 10);
-    //sprintf(autofire_delay_str, "%lu", autofire_delay);
 
     canvas_clear(canvas);
 
@@ -76,6 +80,7 @@ int32_t usb_hid_autofire_app(void* p) {
     UsbMouseEvent event;
     while(1) {
         FuriStatus event_status = furi_message_queue_get(event_queue, &event, 50);
+        uint32_t current_time = furi_get_tick();
 
         if(event_status == FuriStatusOk) {
             if(event.type == EventTypeInput) {
@@ -90,6 +95,19 @@ int32_t usb_hid_autofire_app(void* p) {
                 switch(event.input.key) {
                 case InputKeyOk:
                     btn_left_autofire = !btn_left_autofire;
+                    // Reset timer states when toggling
+                    if(btn_left_autofire) {
+                        last_click_time = current_time;
+                        mouse_pressed = false;
+                        secondClick = 0;
+                        pause_until = 0;
+                    } else {
+                        // Release mouse if it's currently pressed
+                        if(mouse_pressed) {
+                            furi_hal_hid_mouse_release(HID_MOUSE_BTN_LEFT);
+                            mouse_pressed = false;
+                        }
+                    }
                     break;
                 case InputKeyLeft:
                     if(autofire_delay > 0) {
@@ -105,20 +123,42 @@ int32_t usb_hid_autofire_app(void* p) {
             }
         }
 
-        if(btn_left_autofire) {
-            furi_hal_hid_mouse_press(HID_MOUSE_BTN_LEFT);
-            // TODO: Don't wait, but use the timer directly to just don't send the release event (see furi_hal_cortex_delay_us)
-            furi_delay_us(autofire_delay * 500000);
-            furi_hal_hid_mouse_release(HID_MOUSE_BTN_LEFT);
-            furi_delay_us(autofire_delay * 500000);
-            secondClick++;
-            if(secondClick > 2) {
-                furi_delay_ms(autofire_delay * 4);
+        // Non-blocking autofire logic
+        if(btn_left_autofire && autofire_delay > 0) {
+            // Check if we're in a pause period (after every 3rd click)
+            if(pause_until > 0 && current_time < pause_until) {
+                // Still in pause, do nothing
+            } else if(pause_until > 0) {
+                // Pause period ended, reset
+                pause_until = 0;
                 secondClick = 0;
+                last_click_time = current_time;
+            } else if(!mouse_pressed) {
+                // Time to press mouse
+                uint32_t delay_ms = (autofire_delay * 1000) / 2; // Half the delay for press duration
+                if(current_time - last_click_time >= delay_ms) {
+                    furi_hal_hid_mouse_press(HID_MOUSE_BTN_LEFT);
+                    mouse_pressed = true;
+                    mouse_press_time = current_time;
+                }
+            } else {
+                // Mouse is pressed, check if it's time to release
+                uint32_t delay_ms = (autofire_delay * 1000) / 2; // Half the delay for press duration
+                if(current_time - mouse_press_time >= delay_ms) {
+                    furi_hal_hid_mouse_release(HID_MOUSE_BTN_LEFT);
+                    mouse_pressed = false;
+                    last_click_time = current_time;
+                    secondClick++;
+                }
             }
         }
 
         view_port_update(view_port);
+    }
+
+    // Clean up: release mouse if it's pressed when exiting
+    if(mouse_pressed) {
+        furi_hal_hid_mouse_release(HID_MOUSE_BTN_LEFT);
     }
 
     furi_hal_usb_set_config(usb_mode_prev, NULL);
