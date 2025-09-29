@@ -165,7 +165,8 @@ int32_t usb_hid_autofire_app(void* p) {
                 if(current_time - move_time >= 100) {
                     // Move mouse 200px right or left
                     int8_t dx = move_right ? 127 : -127;
-                    int8_t remaining = move_right ? 200 : -200;
+                    // Now we're moving 600px
+                    int8_t remaining = move_right ? 635 : -635;
                     
                     // Move in chunks since HID reports use int8_t (-127 to 127)
                     while(remaining != 0) {
