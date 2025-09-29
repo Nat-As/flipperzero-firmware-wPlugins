@@ -58,7 +58,7 @@ static void usb_hid_autofire_render_callback(Canvas* canvas, void* ctx) {
     
     canvas_draw_str(canvas, 0, 56, "move [px]:");
     canvas_draw_str(canvas, 50, 56, move_distance_str);
-    canvas_draw_str(canvas, 80, 56, "(up/down)");
+    canvas_draw_str(canvas, 80, 56, "(left/right)");
     
     canvas_draw_str(canvas, 0, 63, "Press [back] to exit");
 }
@@ -137,18 +137,18 @@ int32_t usb_hid_autofire_app(void* p) {
                         current_state = StateWaiting;
                     }
                     break;
-                case InputKeyLeft:
+                case InputKeyDown:
                     if(autofire_delay > 0) {
                         autofire_delay -= 60;
                     }
                     break;
-                case InputKeyRight:
+                case InputKeyUp:
                     autofire_delay += 60;
                     break;
-                case InputKeyUp:
+                case InputKeyRight:
                     mouse_move_distance += 10;
                     break;
-                case InputKeyDown:
+                case InputKeyLeft:
                     if(mouse_move_distance >= 10) {
                         mouse_move_distance -= 10;
                     }
