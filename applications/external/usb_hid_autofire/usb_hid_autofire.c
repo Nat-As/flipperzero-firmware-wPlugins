@@ -30,7 +30,7 @@ typedef enum {
 
 bool btn_left_autofire = false;
 uint32_t autofire_delay = 60;
-bool mouse_move_enabled = false;
+uint32_t mouse_move_distance = 0;
 
 // State machine variables
 AutofireState current_state = StateWaiting;
@@ -39,7 +39,9 @@ uint32_t state_start_time = 0;
 static void usb_hid_autofire_render_callback(Canvas* canvas, void* ctx) {
     UNUSED(ctx);
     char autofire_delay_str[12];
+    char move_distance_str[12];
     itoa(autofire_delay, autofire_delay_str, 10);
+    itoa(mouse_move_distance, move_distance_str, 10);
 
     canvas_clear(canvas);
 
@@ -54,10 +56,9 @@ static void usb_hid_autofire_render_callback(Canvas* canvas, void* ctx) {
     canvas_draw_str(canvas, 0, 46, "delay [s]:");
     canvas_draw_str(canvas, 50, 46, autofire_delay_str);
     
-    // Draw checkbox for mouse movement
-    canvas_draw_str(canvas, 0, 56, "[");
-    canvas_draw_str(canvas, 6, 56, mouse_move_enabled ? "X" : " ");
-    canvas_draw_str(canvas, 12, 56, "] Move mouse (up/down)");
+    canvas_draw_str(canvas, 0, 56, "move [px]:");
+    canvas_draw_str(canvas, 50, 56, move_distance_str);
+    canvas_draw_str(canvas, 80, 56, "(up/down)");
     
     canvas_draw_str(canvas, 0, 63, "Press [back] to exit");
 }
@@ -145,8 +146,12 @@ int32_t usb_hid_autofire_app(void* p) {
                     autofire_delay += 60;
                     break;
                 case InputKeyUp:
+                    mouse_move_distance += 10;
+                    break;
                 case InputKeyDown:
-                    mouse_move_enabled = !mouse_move_enabled;
+                    if(mouse_move_distance >= 10) {
+                        mouse_move_distance -= 10;
+                    }
                     break;
                 default:
                     break;
@@ -171,7 +176,7 @@ int32_t usb_hid_autofire_app(void* p) {
                     furi_delay_ms(50);
                     furi_hal_hid_mouse_release(HID_MOUSE_BTN_LEFT);
                     
-                    if(mouse_move_enabled) {
+                    if(mouse_move_distance > 0) {
                         current_state = StateMoveRight;
                     } else {
                         current_state = StateDelay;
@@ -180,9 +185,9 @@ int32_t usb_hid_autofire_app(void* p) {
                     break;
                     
                 case StateMoveRight:
-                    // Move mouse 635px to the right
+                    // Move mouse right by the specified distance
                     furi_delay_ms(100);
-                    move_mouse_horizontal(635);
+                    move_mouse_horizontal(mouse_move_distance);
                     current_state = StateSecondClick;
                     state_start_time = current_time;
                     break;
@@ -198,9 +203,9 @@ int32_t usb_hid_autofire_app(void* p) {
                     break;
                     
                 case StateMoveLeft:
-                    // Move mouse 635px to the left
+                    // Move mouse left by the specified distance
                     furi_delay_ms(100);
-                    move_mouse_horizontal(-635);
+                    move_mouse_horizontal(-(int16_t)mouse_move_distance);
                     current_state = StateDelay;
                     state_start_time = current_time;
                     break;
