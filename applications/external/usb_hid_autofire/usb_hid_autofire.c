@@ -19,17 +19,22 @@ typedef struct {
     EventType type;
 } UsbMouseEvent;
 
+typedef enum {
+    StateWaiting,
+    StateFirstClick,
+    StateMoveRight,
+    StateSecondClick,
+    StateMoveLeft,
+    StateDelay
+} AutofireState;
+
 bool btn_left_autofire = false;
 uint32_t autofire_delay = 60;
 bool mouse_move_enabled = false;
 
-// Timer variables for non-blocking delays
-uint32_t last_click_time = 0;
-bool mouse_pressed = false;
-uint32_t mouse_press_time = 0;
-bool move_right = true;
-bool waiting_to_move = false;
-uint32_t move_time = 0;
+// State machine variables
+AutofireState current_state = StateWaiting;
+uint32_t state_start_time = 0;
 
 static void usb_hid_autofire_render_callback(Canvas* canvas, void* ctx) {
     UNUSED(ctx);
@@ -64,6 +69,26 @@ static void usb_hid_autofire_input_callback(InputEvent* input_event, void* ctx) 
     event.type = EventTypeInput;
     event.input = *input_event;
     furi_message_queue_put(event_queue, &event, FuriWaitForever);
+}
+
+static void move_mouse_horizontal(int16_t distance) {
+    int16_t remaining = distance;
+    
+    while(remaining != 0) {
+        int8_t step;
+        if(remaining > 127) {
+            step = 127;
+            remaining -= 127;
+        } else if(remaining < -127) {
+            step = -127;
+            remaining += 127;
+        } else {
+            step = remaining;
+            remaining = 0;
+        }
+        furi_hal_hid_mouse_move(step, 0);
+        furi_delay_ms(10);
+    }
 }
 
 int32_t usb_hid_autofire_app(void* p) {
@@ -103,18 +128,12 @@ int32_t usb_hid_autofire_app(void* p) {
                 switch(event.input.key) {
                 case InputKeyOk:
                     btn_left_autofire = !btn_left_autofire;
-                    // Reset timer states when toggling
+                    // Reset state when toggling
                     if(btn_left_autofire) {
-                        last_click_time = current_time;
-                        mouse_pressed = false;
-                        move_right = true;
-                        waiting_to_move = false;
+                        current_state = StateWaiting;
+                        state_start_time = current_time;
                     } else {
-                        // Release mouse if it's currently pressed
-                        if(mouse_pressed) {
-                            furi_hal_hid_mouse_release(HID_MOUSE_BTN_LEFT);
-                            mouse_pressed = false;
-                        }
+                        current_state = StateWaiting;
                     }
                     break;
                 case InputKeyLeft:
@@ -135,67 +154,68 @@ int32_t usb_hid_autofire_app(void* p) {
             }
         }
 
-        // Non-blocking autofire logic
+        // State machine for autofire sequence
         if(btn_left_autofire && autofire_delay > 0) {
-            if(!mouse_pressed) {
-                // Time to press mouse
-                uint32_t delay_ms = (autofire_delay * 1000) / 2;
-                if(current_time - last_click_time >= delay_ms) {
+            uint32_t elapsed = current_time - state_start_time;
+            
+            switch(current_state) {
+                case StateWaiting:
+                    // Start the sequence
+                    current_state = StateFirstClick;
+                    state_start_time = current_time;
+                    break;
+                    
+                case StateFirstClick:
+                    // Perform first click (press and release quickly)
                     furi_hal_hid_mouse_press(HID_MOUSE_BTN_LEFT);
-                    mouse_pressed = true;
-                    mouse_press_time = current_time;
-                }
-            } else if(!waiting_to_move) {
-                // Mouse is pressed, check if it's time to release
-                uint32_t delay_ms = (autofire_delay * 1000) / 2;
-                if(current_time - mouse_press_time >= delay_ms) {
+                    furi_delay_ms(50);
                     furi_hal_hid_mouse_release(HID_MOUSE_BTN_LEFT);
-                    mouse_pressed = false;
-                    last_click_time = current_time;
                     
-                    // If mouse movement is enabled, prepare to move
                     if(mouse_move_enabled) {
-                        waiting_to_move = true;
-                        move_time = current_time;
+                        current_state = StateMoveRight;
+                    } else {
+                        current_state = StateDelay;
                     }
-                }
-            } else {
-                // Waiting to move mouse after click
-                // Small delay before moving (100ms)
-                if(current_time - move_time >= 100) {
-                    // Move mouse 200px right or left
-                    int8_t dx = move_right ? 127 : -127;
-                    // Now we're moving 600px
-                    int8_t remaining = move_right ? 635 : -635;
+                    state_start_time = current_time;
+                    break;
                     
-                    // Move in chunks since HID reports use int8_t (-127 to 127)
-                    while(remaining != 0) {
-                        if(move_right && remaining < 127) {
-                            dx = remaining;
-                            remaining = 0;
-                        } else if(!move_right && remaining > -127) {
-                            dx = remaining;
-                            remaining = 0;
-                        } else {
-                            remaining -= dx;
-                        }
-                        furi_hal_hid_mouse_move(dx, 0);
-                        furi_delay_ms(10);
+                case StateMoveRight:
+                    // Move mouse 635px to the right
+                    furi_delay_ms(100);
+                    move_mouse_horizontal(635);
+                    current_state = StateSecondClick;
+                    state_start_time = current_time;
+                    break;
+                    
+                case StateSecondClick:
+                    // Perform second click
+                    furi_delay_ms(100);
+                    furi_hal_hid_mouse_press(HID_MOUSE_BTN_LEFT);
+                    furi_delay_ms(50);
+                    furi_hal_hid_mouse_release(HID_MOUSE_BTN_LEFT);
+                    current_state = StateMoveLeft;
+                    state_start_time = current_time;
+                    break;
+                    
+                case StateMoveLeft:
+                    // Move mouse 635px to the left
+                    furi_delay_ms(100);
+                    move_mouse_horizontal(-635);
+                    current_state = StateDelay;
+                    state_start_time = current_time;
+                    break;
+                    
+                case StateDelay:
+                    // Wait for the specified delay time
+                    if(elapsed >= (autofire_delay * 1000)) {
+                        current_state = StateFirstClick;
+                        state_start_time = current_time;
                     }
-                    
-                    // Toggle direction for next move
-                    move_right = !move_right;
-                    waiting_to_move = false;
-                }
+                    break;
             }
         }
 
         view_port_update(view_port);
-    }
-
-    // Clean up: release mouse if it's pressed when exiting
-    if(mouse_pressed) {
-        furi_hal_hid_mouse_release(HID_MOUSE_BTN_LEFT);
     }
 
     furi_hal_usb_set_config(usb_mode_prev, NULL);
