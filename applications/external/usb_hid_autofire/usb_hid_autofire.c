@@ -21,13 +21,15 @@ typedef struct {
 
 bool btn_left_autofire = false;
 uint32_t autofire_delay = 60;
-uint32_t secondClick = 0;
+bool mouse_move_enabled = false;
 
 // Timer variables for non-blocking delays
 uint32_t last_click_time = 0;
 bool mouse_pressed = false;
 uint32_t mouse_press_time = 0;
-uint32_t pause_until = 0;
+bool move_right = true;
+bool waiting_to_move = false;
+uint32_t move_time = 0;
 
 static void usb_hid_autofire_render_callback(Canvas* canvas, void* ctx) {
     UNUSED(ctx);
@@ -46,6 +48,12 @@ static void usb_hid_autofire_render_callback(Canvas* canvas, void* ctx) {
     canvas_draw_str(canvas, 0, 22, "Press [ok] for auto left clicking");
     canvas_draw_str(canvas, 0, 46, "delay [s]:");
     canvas_draw_str(canvas, 50, 46, autofire_delay_str);
+    
+    // Draw checkbox for mouse movement
+    canvas_draw_str(canvas, 0, 56, "[");
+    canvas_draw_str(canvas, 6, 56, mouse_move_enabled ? "X" : " ");
+    canvas_draw_str(canvas, 12, 56, "] Move mouse (up/down)");
+    
     canvas_draw_str(canvas, 0, 63, "Press [back] to exit");
 }
 
@@ -99,8 +107,8 @@ int32_t usb_hid_autofire_app(void* p) {
                     if(btn_left_autofire) {
                         last_click_time = current_time;
                         mouse_pressed = false;
-                        secondClick = 0;
-                        pause_until = 0;
+                        move_right = true;
+                        waiting_to_move = false;
                     } else {
                         // Release mouse if it's currently pressed
                         if(mouse_pressed) {
@@ -117,6 +125,10 @@ int32_t usb_hid_autofire_app(void* p) {
                 case InputKeyRight:
                     autofire_delay += 60;
                     break;
+                case InputKeyUp:
+                case InputKeyDown:
+                    mouse_move_enabled = !mouse_move_enabled;
+                    break;
                 default:
                     break;
                 }
@@ -125,30 +137,54 @@ int32_t usb_hid_autofire_app(void* p) {
 
         // Non-blocking autofire logic
         if(btn_left_autofire && autofire_delay > 0) {
-            // Check if we're in a pause period (after every 3rd click)
-            if(pause_until > 0 && current_time < pause_until) {
-                // Still in pause, do nothing
-            } else if(pause_until > 0) {
-                // Pause period ended, reset
-                pause_until = 0;
-                secondClick = 0;
-                last_click_time = current_time;
-            } else if(!mouse_pressed) {
+            if(!mouse_pressed) {
                 // Time to press mouse
-                uint32_t delay_ms = (autofire_delay * 1000) / 2; // Half the delay for press duration
+                uint32_t delay_ms = (autofire_delay * 1000) / 2;
                 if(current_time - last_click_time >= delay_ms) {
                     furi_hal_hid_mouse_press(HID_MOUSE_BTN_LEFT);
                     mouse_pressed = true;
                     mouse_press_time = current_time;
                 }
-            } else {
+            } else if(!waiting_to_move) {
                 // Mouse is pressed, check if it's time to release
-                uint32_t delay_ms = (autofire_delay * 1000) / 2; // Half the delay for press duration
+                uint32_t delay_ms = (autofire_delay * 1000) / 2;
                 if(current_time - mouse_press_time >= delay_ms) {
                     furi_hal_hid_mouse_release(HID_MOUSE_BTN_LEFT);
                     mouse_pressed = false;
                     last_click_time = current_time;
-                    secondClick++;
+                    
+                    // If mouse movement is enabled, prepare to move
+                    if(mouse_move_enabled) {
+                        waiting_to_move = true;
+                        move_time = current_time;
+                    }
+                }
+            } else {
+                // Waiting to move mouse after click
+                // Small delay before moving (100ms)
+                if(current_time - move_time >= 100) {
+                    // Move mouse 200px right or left
+                    int8_t dx = move_right ? 127 : -127;
+                    int8_t remaining = move_right ? 200 : -200;
+                    
+                    // Move in chunks since HID reports use int8_t (-127 to 127)
+                    while(remaining != 0) {
+                        if(move_right && remaining < 127) {
+                            dx = remaining;
+                            remaining = 0;
+                        } else if(!move_right && remaining > -127) {
+                            dx = remaining;
+                            remaining = 0;
+                        } else {
+                            remaining -= dx;
+                        }
+                        furi_hal_hid_mouse_move(dx, 0);
+                        furi_delay_ms(10);
+                    }
+                    
+                    // Toggle direction for next move
+                    move_right = !move_right;
+                    waiting_to_move = false;
                 }
             }
         }
